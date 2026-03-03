@@ -1,0 +1,4 @@
+/target
+*.wasm
+!typst-package/pintora.wasm
+tests/*.pdf
