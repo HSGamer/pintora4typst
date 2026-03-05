@@ -114,8 +114,6 @@ fn find_quickjs_sources() -> PathBuf {
 
 /// Get the JS source and write to file
 fn get_js_source(js_dir: &Path, out_path: &Path) {
-    let encoding_indexes = fs::read_to_string(js_dir.join("encoding-indexes.js"))
-        .expect("Failed to read encoding-indexes.js");
     let encoding =
         fs::read_to_string(js_dir.join("encoding.js")).expect("Failed to read encoding.js");
     let runtime_esm =
@@ -130,13 +128,12 @@ fn get_js_source(js_dir: &Path, out_path: &Path) {
     let render_fn = fs::read_to_string(js_dir.join("render.js")).expect("Failed to read render.js");
 
     let full_js = format!(
-        "{}\n{}\n{}\n{}\n{}",
-        console_stub, encoding_indexes, encoding, runtime_patched, render_fn
+        "{}\n{}\n{}\n{}",
+        console_stub, encoding, runtime_patched, render_fn
     );
 
     fs::write(out_path, full_js).expect("Failed to write pintora.js");
 
-    println!("cargo:rerun-if-changed=js/encoding-indexes.js");
     println!("cargo:rerun-if-changed=js/encoding.js");
     println!("cargo:rerun-if-changed=js/runtime.esm.js");
     println!("cargo:rerun-if-changed=js/console.js");
