@@ -29,8 +29,12 @@ fn compile_to_bytecode(in_path: &Path, out_path: &Path) {
     ctx.with(|ctx| {
         let module = rquickjs::Module::declare(ctx.clone(), "pintora.js", source)
             .expect("Failed to declare QuickJS module");
+        let mut options = rquickjs::module::WriteOptions::default();
+        options.strip_debug = true;
+        options.strip_source = true;
+
         let bytecode = module
-            .write(rquickjs::module::WriteOptions::default())
+            .write(options)
             .expect("Failed to compile module to bytecode");
 
         fs::write(out_path, bytecode).expect("Failed to write pintora.bc");

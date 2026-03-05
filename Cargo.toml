@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1"
-rquickjs = { version = "0.11", default-features = false, features = ["classes", "macro"] }
+rquickjs = { version = "0.11", default-features = false }
 wasm-minimal-protocol = "0.1"
 
 [build-dependencies]
@@ -17,8 +17,8 @@ regex = "1"
 rquickjs = { version = "0.11", default-features = false }
 
 [profile.release]
-lto = true
+lto = "fat"
 strip = true
-opt-level = 'z'
+opt-level = 3
 codegen-units = 1
 panic = 'abort'
