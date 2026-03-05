@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1"
-rquickjs = { version = "0.11", default-features = false }
+rquickjs = { version = "0.11", default-features = false, features = ["classes", "macro"] }
 wasm-minimal-protocol = "0.1"
 
 [build-dependencies]

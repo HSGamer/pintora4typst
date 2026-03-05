@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use rquickjs::prelude::{Opt, Rest};
-use rquickjs::{Ctx, Function, TypedArray, Value};
+use rquickjs::{class::Trace, Class, Ctx, Function, JsLifetime, Object, TypedArray, Value};
 use wasm_minimal_protocol::*;
 
 initiate_protocol!();
@@ -9,33 +9,78 @@ const PINTORA_BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pintor
 
 // ─── Native Polyfills via Functions ──────────────────────────────────────────
 
-fn native_encode<'js>(
-    ctx: Ctx<'js>,
-    string: Opt<rquickjs::Coerced<String>>,
-) -> rquickjs::Result<Value<'js>> {
-    let bytes = string.0.map(|s| s.0.into_bytes()).unwrap_or_default();
-    TypedArray::new(ctx.clone(), bytes).map(|m| m.into_value())
-}
+#[derive(Trace, JsLifetime)]
+#[rquickjs::class]
+pub struct TextEncoder {}
 
-fn native_decode<'js>(
-    bytes: Opt<TypedArray<'js, u8>>,
-    encoding: Opt<rquickjs::String<'js>>,
-) -> rquickjs::Result<String> {
-    let Some(bytes) = bytes.0 else {
-        return Ok(String::new());
-    };
-
-    let bytes_slice = bytes.as_bytes().unwrap_or(&[]);
-
-    if let Some(enc_js) = encoding.0 {
-        if let Ok(enc_str) = enc_js.to_string() {
-            if enc_str.eq_ignore_ascii_case("ascii") || enc_str.eq_ignore_ascii_case("us-ascii") {
-                return Ok(bytes_slice.iter().map(|&b| (b & 0x7F) as char).collect());
-            }
-        }
+#[rquickjs::methods]
+impl TextEncoder {
+    #[qjs(constructor)]
+    pub fn new() -> Self {
+        Self {}
     }
 
-    Ok(String::from_utf8_lossy(bytes_slice).into_owned())
+    #[qjs(get)]
+    pub fn encoding(&self) -> &'static str {
+        "utf-8"
+    }
+
+    pub fn encode<'js>(
+        &self,
+        ctx: Ctx<'js>,
+        string: Opt<rquickjs::Coerced<String>>,
+    ) -> rquickjs::Result<Value<'js>> {
+        let bytes = string.0.map(|s| s.0.into_bytes()).unwrap_or_default();
+        TypedArray::new(ctx.clone(), bytes).map(|m| m.into_value())
+    }
+}
+
+#[derive(Trace, JsLifetime)]
+#[rquickjs::class]
+pub struct TextDecoder {
+    encoding: String,
+}
+
+#[rquickjs::methods]
+impl TextDecoder {
+    #[qjs(constructor)]
+    pub fn new(label: Opt<rquickjs::Coerced<String>>) -> Self {
+        let encoding = label
+            .0
+            .map(|s| s.0)
+            .unwrap_or_else(|| "utf-8".to_string())
+            .to_lowercase();
+        Self { encoding }
+    }
+
+    #[qjs(get)]
+    pub fn encoding(&self) -> String {
+        self.encoding.clone()
+    }
+
+    pub fn decode<'js>(&self, ctx: Ctx<'js>, bytes: Opt<Value<'js>>) -> rquickjs::Result<String> {
+        let Some(bytes_val) = bytes.0 else {
+            return Ok(String::new());
+        };
+
+        let typed_array_res = TypedArray::<u8>::from_value(bytes_val.clone());
+        let typed_array: TypedArray<'js, u8> = match typed_array_res {
+            Ok(t) => t,
+            Err(_) => {
+                let uint8_array_ctor: rquickjs::Function = ctx.globals().get("Uint8Array")?;
+                uint8_array_ctor.call((bytes_val,))?
+            }
+        };
+
+        let bytes_slice = typed_array.as_bytes().unwrap_or(&[]);
+
+        let enc_str = &self.encoding;
+        if enc_str.eq_ignore_ascii_case("ascii") || enc_str.eq_ignore_ascii_case("us-ascii") {
+            return Ok(bytes_slice.iter().map(|&b| (b & 0x7F) as char).collect());
+        }
+
+        Ok(String::from_utf8_lossy(bytes_slice).into_owned())
+    }
 }
 
 fn format_console_args(args: Rest<rquickjs::Coerced<String>>) -> String {
@@ -67,35 +112,6 @@ fn native_console_warn<'js>(
     Ok(())
 }
 
-const JS_POLYFILLS: &str = r#"
-class TextEncoder {
-    get encoding() { return "utf-8"; }
-    encode(str) { return _RustTextEncoder_encode(str); }
-}
-
-class TextDecoder {
-    constructor(label) {
-        this._encoding = (label || "utf-8").toLowerCase();
-    }
-    get encoding() { return this._encoding; }
-    decode(bytes) { 
-        if (!bytes) return "";
-        var arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-        return _RustTextDecoder_decode(arr, this._encoding); 
-    }
-}
-
-globalThis.TextEncoder = TextEncoder;
-globalThis.TextDecoder = TextDecoder;
-
-// Expose native Rust implementations for the console
-globalThis.console = {
-    log: function(...args) { _RustConsole_log(...args); },
-    error: function(...args) { _RustConsole_error(...args); },
-    warn: function(...args) { _RustConsole_warn(...args); }
-};
-"#;
-
 // ─── Main WASM plugin ────────────────────────────────────────────────────────
 
 thread_local! {
@@ -107,25 +123,14 @@ thread_local! {
             // 1. Bind Rust functions to global context
             let globals = ctx.globals();
 
-            let encode_fn = Function::new(ctx.clone(), native_encode)
-                .expect("failed to create encode function");
-            globals.set("_RustTextEncoder_encode", encode_fn)
-                .expect("failed to set encode function");
+            Class::<TextEncoder>::define(&globals).expect("failed to define TextEncoder");
+            Class::<TextDecoder>::define(&globals).expect("failed to define TextDecoder");
 
-            let decode_fn = Function::new(ctx.clone(), native_decode)
-                .expect("failed to create decode function");
-            globals.set("_RustTextDecoder_decode", decode_fn)
-                .expect("failed to set decode function");
-
-            let console_log_fn = Function::new(ctx.clone(), native_console_log).unwrap();
-            globals.set("_RustConsole_log", console_log_fn).unwrap();
-            let console_warn_fn = Function::new(ctx.clone(), native_console_warn).unwrap();
-            globals.set("_RustConsole_warn", console_warn_fn).unwrap();
-            let console_error_fn = Function::new(ctx.clone(), native_console_error).unwrap();
-            globals.set("_RustConsole_error", console_error_fn).unwrap();
-
-            // Evaluate the JS polyfills
-            let _: () = ctx.eval(JS_POLYFILLS).expect("failed to eval polyfills");
+            let console = Object::new(ctx.clone()).unwrap();
+            console.set("log", Function::new(ctx.clone(), native_console_log).unwrap()).unwrap();
+            console.set("warn", Function::new(ctx.clone(), native_console_warn).unwrap()).unwrap();
+            console.set("error", Function::new(ctx.clone(), native_console_error).unwrap()).unwrap();
+            globals.set("console", console).unwrap();
 
             // 2. Load and evaluate the pre-compiled bytecode module
             let loaded_mod = unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }
@@ -172,20 +177,29 @@ mod tests {
         ctx.with(|ctx| {
             let globals = ctx.globals();
 
-            let console_log_fn = Function::new(ctx.clone(), native_console_log).unwrap();
-            globals.set("_RustConsole_log", console_log_fn).unwrap();
-            let console_warn_fn = Function::new(ctx.clone(), native_console_warn).unwrap();
-            globals.set("_RustConsole_warn", console_warn_fn).unwrap();
-            let console_error_fn = Function::new(ctx.clone(), native_console_error).unwrap();
-            globals.set("_RustConsole_error", console_error_fn).unwrap();
+            let console = Object::new(ctx.clone()).unwrap();
+            console
+                .set(
+                    "log",
+                    Function::new(ctx.clone(), native_console_log).unwrap(),
+                )
+                .unwrap();
+            console
+                .set(
+                    "warn",
+                    Function::new(ctx.clone(), native_console_warn).unwrap(),
+                )
+                .unwrap();
+            console
+                .set(
+                    "error",
+                    Function::new(ctx.clone(), native_console_error).unwrap(),
+                )
+                .unwrap();
+            globals.set("console", console).unwrap();
 
-            let encode_fn = Function::new(ctx.clone(), native_encode).unwrap();
-            globals.set("_RustTextEncoder_encode", encode_fn).unwrap();
-
-            let decode_fn = Function::new(ctx.clone(), native_decode).unwrap();
-            globals.set("_RustTextDecoder_decode", decode_fn).unwrap();
-
-            ctx.eval::<(), _>(JS_POLYFILLS).unwrap();
+            Class::<TextEncoder>::define(&globals).expect("failed to define TextEncoder");
+            Class::<TextDecoder>::define(&globals).expect("failed to define TextDecoder");
 
             // Sanity test module evaluation errors
             let throw_mod = rquickjs::Module::declare(
