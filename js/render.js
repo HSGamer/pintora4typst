@@ -5,7 +5,7 @@
 
     csrc.dataset['renderer'];
 
-    function PintoraRender(e, t = "default", A = "Source Code Pro, sans-serif") {
+    globalThis.PintoraRender = function(e, t = "default", A = "Source Code Pro, sans-serif") {
       csrc.dataset.theme = t;
       var n = config;
       n.core.defaultFontFamily = A;

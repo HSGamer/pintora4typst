@@ -9,13 +9,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1"
-quickjs-wasm-rs = "3.1.0"
+rquickjs = { version = "0.11", default-features = false }
 wasm-minimal-protocol = "0.1"
 
 [build-dependencies]
-cc = "1.0"
 regex = "1"
-quickjs-wasm-rs = "3.1.0"
+rquickjs = { version = "0.11", default-features = false, features = ["classes", "macro"] }
 
 [profile.release]
 lto = true

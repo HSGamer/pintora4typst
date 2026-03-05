@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use quickjs_wasm_rs::{to_qjs_value, JSContextRef, JSValue};
 use wasm_minimal_protocol::*;
 
 initiate_protocol!();
@@ -7,12 +6,18 @@ initiate_protocol!();
 const PINTORA_BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pintora.bc"));
 
 thread_local! {
-    static JS_CTX: JSContextRef = {
-        let context = JSContextRef::default();
-        context
-            .eval_binary(PINTORA_BYTECODE)
-            .expect("failed to load pintora bytecode");
-        context
+    static JS_ENV: (rquickjs::Runtime, rquickjs::Context) = {
+        let rt = rquickjs::Runtime::new().expect("failed to create runtime");
+        let ctx = rquickjs::Context::full(&rt).expect("failed to create context");
+
+        ctx.with(|ctx| {
+            // Load and evaluate the pre-compiled bytecode module
+            let loaded_mod = unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }
+                .expect("failed to load pintora bytecode");
+            loaded_mod.eval().expect("failed to evaluate pintora module");
+        });
+
+        (rt, ctx)
     };
 }
 
@@ -26,36 +31,22 @@ thread_local! {
 /// Returns the SVG string.
 #[wasm_func]
 fn render(src: &[u8], style: &[u8], font: &[u8]) -> Result<Vec<u8>> {
-    JS_CTX.with(|context| {
-        // Get the PintoraRender function from global scope
-        let global_this = context
-            .global_object()
-            .context("failed to get global object")?;
-        let function = global_this
-            .get_property("PintoraRender")
-            .context("failed to get PintoraRender function")?;
+    let src_str = std::str::from_utf8(src).context("src is not valid utf8")?;
+    let style_str = std::str::from_utf8(style).context("style is not valid utf8")?;
+    let font_str = std::str::from_utf8(font).context("font is not valid utf8")?;
 
-        // Convert arguments to JS values
-        let src = std::str::from_utf8(src).context("src is not valid utf8")?;
-        let style = std::str::from_utf8(style).context("style is not valid utf8")?;
-        let font = std::str::from_utf8(font).context("font is not valid utf8")?;
+    JS_ENV.with(|(_, ctx)| {
+        ctx.with(|ctx| {
+            let globals = ctx.globals();
+            let render_fn: rquickjs::Function = globals
+                .get("PintoraRender")
+                .context("failed to get PintoraRender function")?;
 
-        let js_src = to_qjs_value(context, &JSValue::String(src.to_string()))
-            .context("failed to convert src to JSValue")?;
-        let js_style = to_qjs_value(context, &JSValue::String(style.to_string()))
-            .context("failed to convert style to JSValue")?;
-        let js_font = to_qjs_value(context, &JSValue::String(font.to_string()))
-            .context("failed to convert font to JSValue")?;
+            let result: String = render_fn
+                .call((src_str, style_str, font_str))
+                .context("failed to call PintoraRender")?;
 
-        // Call PintoraRender(src, style, font) natively
-        let result = function
-            .call(&global_this, &[js_src, js_style, js_font])
-            .context("failed to call PintoraRender")?;
-
-        let svg = result
-            .as_str()
-            .context("PintoraRender did not return a string")?;
-
-        Ok(svg.as_bytes().to_vec())
+            Ok(result.into_bytes())
+        })
     })
 }
