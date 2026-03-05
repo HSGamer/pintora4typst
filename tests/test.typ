@@ -166,3 +166,46 @@
     @note left of ユーザー: 多言語サポート\n(Multi-language support)
   ```.text,
 )
+
+== A sample diagram
+#render(
+  ```
+  componentDiagram
+  @param layoutDirection TB
+  @param edgeType polyline
+  @param componentPadding 20
+  @param componentBackground #ffffff
+  @param componentBorderColor #000000
+  @param groupBackground #ffffff
+  @param groupBorderColor #000000
+  @param edgeColor #000000
+  @param relationLineColor #000000
+  @param textColor #000000
+  @param hideGroupType true
+
+  node "Management Plane (CMS)" {
+    [Web Server]
+    interface "Universal Agent Protocol (UAP)"
+    [Database]
+    [Web Server] -- [Database]
+    [Web Server] -- [Universal Agent Protocol (UAP)]
+  }
+
+  node "Execution Plane (Agents)" {
+    node "Selenium" {
+        [Selenium Agent] as agent1
+        [Universal Agent Protocol (UAP)] -- [agent1]
+        [Browser / Grid] as b1
+        [agent1] -- [b1]
+    }
+    node "Playwright" {
+        [Playwright Agent] as agent2
+        [Universal Agent Protocol (UAP)] -- [agent2]
+        [Browser] as b2
+        [agent2] -- [b2]
+    }
+  }
+
+  Client -- [Web Server] : HTTP
+  ```.text,
+)

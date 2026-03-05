@@ -177,9 +177,22 @@ fn render(src: &[u8], style: &[u8], font: &[u8]) -> Result<Vec<u8>> {
                 .get("PintoraRender")
                 .context("failed to get PintoraRender function")?;
 
-            let result: String = render_fn
-                .call((src_str, style_str, font_str))
-                .context("failed to call PintoraRender")?;
+            let result_res: rquickjs::Result<String> =
+                render_fn.call((src_str, style_str, font_str));
+            let result = match result_res {
+                Ok(r) => r,
+                Err(e) => {
+                    let mut msg = format!("failed to call PintoraRender: {:?}", e);
+                    if let Some(js_error) = ctx.catch().into_exception() {
+                        msg = format!(
+                            "JS Exception in PintoraRender: {} \nStack: {}",
+                            js_error.message().unwrap_or_default(),
+                            js_error.stack().unwrap_or_default()
+                        );
+                    }
+                    return Err(anyhow::anyhow!(msg));
+                }
+            };
 
             Ok(result.into_bytes())
         })
