@@ -154,3 +154,15 @@
     A->>A: Self
   ```.text,
 )
+
+== UTF-8 Encoding Test
+#render(
+  ```
+  sequenceDiagram
+    participant ユーザー
+    participant サーバー
+    ユーザー->>サーバー: 🚀 こんにちは! (Hello)
+    サーバー-->>ユーザー: サーバーからの応答 (Response)
+    @note left of ユーザー: 多言語サポート\n(Multi-language support)
+  ```.text,
+)

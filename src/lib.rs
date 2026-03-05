@@ -10,14 +10,17 @@ const PINTORA_BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pintor
 // ─── Native Polyfills via Functions ──────────────────────────────────────────
 
 fn native_encode<'js>(ctx: Ctx<'js>, string: Opt<Value<'js>>) -> rquickjs::Result<Value<'js>> {
-    if let Some(string) = string.0 {
-        if let Some(string) = string.as_string() {
-            let string = string.to_string()?;
-            return TypedArray::new(ctx.clone(), string.as_bytes())
-                .map(|m: TypedArray<'_, u8>| m.into_value());
+    let mut bytes = Vec::new();
+    if let Some(val) = string.0 {
+        if let Ok(string_fn) = ctx.globals().get::<_, rquickjs::Function>("String") {
+            if let Ok(s) = string_fn.call::<_, rquickjs::String>((val,)) {
+                if let Ok(rust_str) = s.to_string() {
+                    bytes.extend_from_slice(rust_str.as_bytes());
+                }
+            }
         }
     }
-    TypedArray::new(ctx.clone(), []).map(|m: TypedArray<'_, u8>| m.into_value())
+    TypedArray::new(ctx.clone(), bytes).map(|m| m.into_value())
 }
 
 fn native_decode<'js>(
@@ -240,5 +243,23 @@ mod tests {
                 .expect("Failed to get PintoraRender in test");
             println!("Successfully got PintoraRender function!");
         });
+    }
+
+    #[test]
+    fn test_render_utf8() {
+        let src = r#"
+sequenceDiagram
+  participant ユーザー
+  participant サーバー
+  ユーザー->>サーバー: 🚀 こんにちは!
+  サーバー-->>ユーザー: サーバーからの応答
+  @note left of ユーザー: 多言語サポート
+"#;
+        let style = "default";
+        let font = "sans-serif";
+
+        println!("Calling render with UTF-8...");
+        let result = render(src.as_bytes(), style.as_bytes(), font.as_bytes()).unwrap();
+        println!("Render result: {}", String::from_utf8_lossy(&result));
     }
 }
