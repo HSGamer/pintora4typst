@@ -5,7 +5,7 @@ use wasm_minimal_protocol::*;
 
 initiate_protocol!();
 
-const PINTORA_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/pintora.js"));
+const PINTORA_BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pintora.bc"));
 
 // ─── Native Polyfills via Functions ──────────────────────────────────────────
 
@@ -96,8 +96,10 @@ thread_local! {
             // Evaluate the JS polyfills
             let _: () = ctx.eval(JS_POLYFILLS).expect("failed to eval polyfills");
 
-            // 2. Evaluate the concatenated JS script
-            let _: () = ctx.eval(PINTORA_JS).expect("failed to evaluate pintora js");
+            // 2. Load and evaluate the pre-compiled bytecode module
+            let loaded_mod = unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }
+                .expect("failed to load pintora bytecode");
+            let _ = loaded_mod.eval();
         });
 
         (rt, ctx)
@@ -183,17 +185,10 @@ mod tests {
                 println!("throw_mod did NOT throw!");
             }
 
-            let script = format!(
-                "try {{\n{}\n}} catch (e) {{ std_print('CAUGHT: ', e, e.stack); throw e; }}",
-                PINTORA_JS
-            );
-            match ctx.eval::<(), _>(script.as_str()) {
-                Ok(_) => println!("Pintora JS evaluated successfully!"),
-                Err(e) => {
-                    println!("Eval failed with Error: {:?}", e);
-                    panic!("Evaluation failed");
-                }
-            }
+            let loaded_mod =
+                unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }.unwrap();
+
+            let _ = loaded_mod.eval();
         });
 
         loop {
