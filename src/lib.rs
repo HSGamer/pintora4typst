@@ -43,6 +43,39 @@ fn native_decode<'js>(
         .map_err(|e| rquickjs::Error::new_from_js_message("bytes", "string", &e.to_string()))
 }
 
+fn format_console_args<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> rquickjs::Result<String> {
+    let mut out = String::new();
+    let globals = ctx.globals();
+    let string_fn: rquickjs::Function = globals.get("String")?;
+    for (i, arg) in args.0.into_iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let s: rquickjs::String = string_fn.call((arg,))?;
+        out.push_str(&s.to_string()?);
+    }
+    Ok(out)
+}
+
+fn native_console_log<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> rquickjs::Result<()> {
+    let msg = format_console_args(ctx, args)?;
+    println!("{}", msg);
+    Ok(())
+}
+
+fn native_console_error<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> rquickjs::Result<()> {
+    let msg = format_console_args(ctx, args)?;
+    eprintln!("{}", msg);
+    Ok(())
+}
+
+fn native_console_warn<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> rquickjs::Result<()> {
+    let msg = format_console_args(ctx.clone(), args)?;
+    eprintln!("{}", msg);
+    ctx.globals().set("_pintoraLastWarning", msg)?;
+    Ok(())
+}
+
 const JS_POLYFILLS: &str = r#"
 class TextEncoder {
     get encoding() { return "utf-8"; }
@@ -64,11 +97,11 @@ class TextDecoder {
 globalThis.TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder;
 
-// Override console to print to stdout so we can see any JS errors
+// Expose native Rust implementations for the console
 globalThis.console = {
-    log: function(...args) { std_print("LOG:", ...args); },
-    error: function(...args) { std_print("ERROR:", ...args); },
-    warn: function(...args) { std_print("WARN:", ...args); }
+    log: function(...args) { _RustConsole_log(...args); },
+    error: function(...args) { _RustConsole_error(...args); },
+    warn: function(...args) { _RustConsole_warn(...args); }
 };
 "#;
 
@@ -92,6 +125,13 @@ thread_local! {
                 .expect("failed to create decode function");
             globals.set("_RustTextDecoder_decode", decode_fn)
                 .expect("failed to set decode function");
+
+            let console_log_fn = Function::new(ctx.clone(), native_console_log).unwrap();
+            globals.set("_RustConsole_log", console_log_fn).unwrap();
+            let console_warn_fn = Function::new(ctx.clone(), native_console_warn).unwrap();
+            globals.set("_RustConsole_warn", console_warn_fn).unwrap();
+            let console_error_fn = Function::new(ctx.clone(), native_console_error).unwrap();
+            globals.set("_RustConsole_error", console_error_fn).unwrap();
 
             // Evaluate the JS polyfills
             let _: () = ctx.eval(JS_POLYFILLS).expect("failed to eval polyfills");
@@ -141,23 +181,12 @@ mod tests {
         ctx.with(|ctx| {
             let globals = ctx.globals();
 
-            let print_fn = Function::new(ctx.clone(), |args: Rest<Value<'_>>| {
-                for arg in args.0 {
-                    if let Some(s) = arg.as_string() {
-                        print!("{} ", s.to_string().unwrap_or_default());
-                    } else if arg.is_error() {
-                        let err = arg.as_object().unwrap();
-                        let msg: String = err.get::<_, String>("message").unwrap_or_default();
-                        let stack: String = err.get::<_, String>("stack").unwrap_or_default();
-                        print!("Error: {}\nStack: {}", msg, stack);
-                    } else {
-                        print!("{:?} ", arg);
-                    }
-                }
-                println!();
-            })
-            .unwrap();
-            globals.set("std_print", print_fn).unwrap();
+            let console_log_fn = Function::new(ctx.clone(), native_console_log).unwrap();
+            globals.set("_RustConsole_log", console_log_fn).unwrap();
+            let console_warn_fn = Function::new(ctx.clone(), native_console_warn).unwrap();
+            globals.set("_RustConsole_warn", console_warn_fn).unwrap();
+            let console_error_fn = Function::new(ctx.clone(), native_console_error).unwrap();
+            globals.set("_RustConsole_error", console_error_fn).unwrap();
 
             let encode_fn = Function::new(ctx.clone(), native_encode).unwrap();
             globals.set("_RustTextEncoder_encode", encode_fn).unwrap();

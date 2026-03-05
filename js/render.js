@@ -11,11 +11,15 @@
       n.core.defaultFontFamily = A;
       configApi.setConfig(n);
       runtime_default.setConfig(n);
-      console = new ConsoleStub();
+      
+      globalThis._pintoraLastWarning = "";
+      
       csrc.innerText = e;
       rslt.innerHTML = "";
       pintoraStandalone.renderContentOf(csrc, { resultContainer: rslt });
-      if ("" === rslt.innerHTML) throw new Error("\n " + String(console.warnHistory.slice(-1)));
+      if ("" === rslt.innerHTML) {
+          throw new Error("\n Rendering Error: " + (globalThis._pintoraLastWarning || "Unknown issue format"));
+      }
       rslt.firstChild.setAttribute("xmlns", "http://www.w3.org/2000/svg");
       return rslt.innerHTML;
     }

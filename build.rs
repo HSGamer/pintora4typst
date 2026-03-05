@@ -46,16 +46,12 @@ fn get_js_source(js_dir: &Path, out_path: &Path) {
     let export_re = Regex::new(r"(?s)export\s*\{.*\}").unwrap();
     let runtime_patched = export_re.replace_all(&runtime_patched, "//EXPORTS aren't SUPPORTED");
 
-    // ConsoleStub must be in the module source because render.js references it directly
-    let console_stub =
-        fs::read_to_string(js_dir.join("console.js")).expect("Failed to read console.js");
     let render_fn = fs::read_to_string(js_dir.join("render.js")).expect("Failed to read render.js");
 
-    let full_js = format!("{}\n{}\n{}", console_stub, runtime_patched, render_fn);
+    let full_js = format!("{}\n{}", runtime_patched, render_fn);
 
     fs::write(out_path, full_js).expect("Failed to write pintora.js");
 
     println!("cargo:rerun-if-changed=js/runtime.esm.js");
-    println!("cargo:rerun-if-changed=js/console.js");
     println!("cargo:rerun-if-changed=js/render.js");
 }
