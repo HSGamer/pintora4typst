@@ -9,71 +9,59 @@ const PINTORA_BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pintor
 
 // ─── Native Polyfills via Functions ──────────────────────────────────────────
 
-fn native_encode<'js>(ctx: Ctx<'js>, string: Opt<Value<'js>>) -> rquickjs::Result<Value<'js>> {
-    let mut bytes = Vec::new();
-    if let Some(val) = string.0 {
-        if let Ok(string_fn) = ctx.globals().get::<_, rquickjs::Function>("String") {
-            if let Ok(s) = string_fn.call::<_, rquickjs::String>((val,)) {
-                if let Ok(rust_str) = s.to_string() {
-                    bytes.extend_from_slice(rust_str.as_bytes());
-                }
-            }
-        }
-    }
+fn native_encode<'js>(
+    ctx: Ctx<'js>,
+    string: Opt<rquickjs::Coerced<String>>,
+) -> rquickjs::Result<Value<'js>> {
+    let bytes = string.0.map(|s| s.0.into_bytes()).unwrap_or_default();
     TypedArray::new(ctx.clone(), bytes).map(|m| m.into_value())
 }
 
 fn native_decode<'js>(
     bytes: Opt<TypedArray<'js, u8>>,
-    encoding: Opt<String>,
+    encoding: Opt<rquickjs::String<'js>>,
 ) -> rquickjs::Result<String> {
-    let bytes = match bytes.0 {
-        Some(b) => b,
-        None => return Ok(String::new()),
+    let Some(bytes) = bytes.0 else {
+        return Ok(String::new());
     };
-    let encoding = encoding
-        .0
-        .unwrap_or_else(|| "utf-8".to_string())
-        .to_lowercase();
 
     let bytes_slice = bytes.as_bytes().unwrap_or(&[]);
 
-    if encoding == "ascii" || encoding == "us-ascii" {
-        return Ok(bytes_slice.iter().map(|&b| (b & 0x7F) as char).collect());
+    if let Some(enc_js) = encoding.0 {
+        if let Ok(enc_str) = enc_js.to_string() {
+            if enc_str.eq_ignore_ascii_case("ascii") || enc_str.eq_ignore_ascii_case("us-ascii") {
+                return Ok(bytes_slice.iter().map(|&b| (b & 0x7F) as char).collect());
+            }
+        }
     }
 
-    String::from_utf8(bytes_slice.to_vec())
-        .map_err(|e| rquickjs::Error::new_from_js_message("bytes", "string", &e.to_string()))
+    Ok(String::from_utf8_lossy(bytes_slice).into_owned())
 }
 
-fn format_console_args<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> rquickjs::Result<String> {
+fn format_console_args(args: Rest<rquickjs::Coerced<String>>) -> String {
     let mut out = String::new();
-    let globals = ctx.globals();
-    let string_fn: rquickjs::Function = globals.get("String")?;
     for (i, arg) in args.0.into_iter().enumerate() {
         if i > 0 {
             out.push(' ');
         }
-        let s: rquickjs::String = string_fn.call((arg,))?;
-        out.push_str(&s.to_string()?);
+        out.push_str(&arg.0);
     }
-    Ok(out)
+    out
 }
 
-fn native_console_log<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> rquickjs::Result<()> {
-    let msg = format_console_args(ctx, args)?;
-    println!("{}", msg);
-    Ok(())
+fn native_console_log(args: Rest<rquickjs::Coerced<String>>) {
+    println!("{}", format_console_args(args));
 }
 
-fn native_console_error<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> rquickjs::Result<()> {
-    let msg = format_console_args(ctx, args)?;
-    eprintln!("{}", msg);
-    Ok(())
+fn native_console_error(args: Rest<rquickjs::Coerced<String>>) {
+    eprintln!("{}", format_console_args(args));
 }
 
-fn native_console_warn<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> rquickjs::Result<()> {
-    let msg = format_console_args(ctx.clone(), args)?;
+fn native_console_warn<'js>(
+    ctx: Ctx<'js>,
+    args: Rest<rquickjs::Coerced<String>>,
+) -> rquickjs::Result<()> {
+    let msg = format_console_args(args);
     eprintln!("{}", msg);
     ctx.globals().set("_pintoraLastWarning", msg)?;
     Ok(())
