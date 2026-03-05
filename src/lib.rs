@@ -94,12 +94,12 @@ fn format_console_args(args: Rest<rquickjs::Coerced<String>>) -> String {
     out
 }
 
-fn native_console_log(args: Rest<rquickjs::Coerced<String>>) {
-    println!("{}", format_console_args(args));
+fn native_console_log(_args: Rest<rquickjs::Coerced<String>>) {
+    // Suppressed to prevent wasi-stub fd_write panics
 }
 
-fn native_console_error(args: Rest<rquickjs::Coerced<String>>) {
-    eprintln!("{}", format_console_args(args));
+fn native_console_error(_args: Rest<rquickjs::Coerced<String>>) {
+    // Suppressed to prevent wasi-stub fd_write panics
 }
 
 fn native_console_warn<'js>(
@@ -107,7 +107,6 @@ fn native_console_warn<'js>(
     args: Rest<rquickjs::Coerced<String>>,
 ) -> rquickjs::Result<()> {
     let msg = format_console_args(args);
-    eprintln!("{}", msg);
     ctx.globals().set("_pintoraLastWarning", msg)?;
     Ok(())
 }
@@ -117,6 +116,8 @@ fn native_console_warn<'js>(
 thread_local! {
     static JS_ENV: (rquickjs::Runtime, rquickjs::Context) = {
         let rt = rquickjs::Runtime::new().expect("failed to create runtime");
+        // Increase GC threshold to 32MB to avoid constant GC pauses during immense AST generations in Pintora parsing
+        rt.set_gc_threshold(32 * 1024 * 1024);
         let ctx = rquickjs::Context::full(&rt).expect("failed to create context");
 
         ctx.with(|ctx| {
