@@ -10,7 +10,7 @@
       var n = config;
       n.core.defaultFontFamily = A;
       configApi.setConfig(n);
-      runtime_default.setConfig(n);
+      index_default.setConfig(n);
       
       globalThis._pintoraLastWarning = "";
       

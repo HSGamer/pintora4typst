@@ -1,6 +1,9 @@
-use anyhow::{Context, Result};
-use rquickjs::prelude::{Opt, Rest};
-use rquickjs::{class::Trace, Class, Ctx, Function, JsLifetime, Object, TypedArray, Value};
+use anyhow::{Context as _, Result};
+use base64::{engine::general_purpose, Engine as _};
+use rquickjs::class::Trace;
+use rquickjs::{
+    function::Rest, prelude::*, Class, Ctx, Function, JsLifetime, Object, TypedArray, Value,
+};
 use wasm_minimal_protocol::*;
 
 initiate_protocol!();
@@ -111,6 +114,16 @@ fn native_console_warn<'js>(
     Ok(())
 }
 
+fn native_uint8array_from_base64<'js>(
+    ctx: Ctx<'js>,
+    b64: String,
+) -> rquickjs::Result<rquickjs::TypedArray<'js, u8>> {
+    let bytes = general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|_| rquickjs::Error::Unknown)?;
+    TypedArray::new(ctx, bytes)
+}
+
 // ─── Main WASM plugin ────────────────────────────────────────────────────────
 
 thread_local! {
@@ -133,10 +146,17 @@ thread_local! {
             console.set("error", Function::new(ctx.clone(), native_console_error).unwrap()).unwrap();
             globals.set("console", console).unwrap();
 
+            // 1.5. Polyfill Uint8Array.fromBase64
+            let uint8array: Object = globals.get("Uint8Array").expect("failed to get Uint8Array");
+            uint8array.set("fromBase64", Function::new(ctx.clone(), native_uint8array_from_base64).unwrap()).unwrap();
+
             // 2. Load and evaluate the pre-compiled bytecode module
             let loaded_mod = unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }
                 .expect("failed to load pintora bytecode");
-            let _ = loaded_mod.eval();
+
+            loaded_mod.eval().expect("failed to evaluate pintora bytecode");
+
+            let _ = globals.get::<_, Function>("PintoraRender").expect("failed to get PintoraRender function");
         });
 
         (rt, ctx)
@@ -199,6 +219,14 @@ mod tests {
                 .unwrap();
             globals.set("console", console).unwrap();
 
+            let uint8array: Object = globals.get("Uint8Array").expect("failed to get Uint8Array");
+            uint8array
+                .set(
+                    "fromBase64",
+                    Function::new(ctx.clone(), native_uint8array_from_base64).unwrap(),
+                )
+                .unwrap();
+
             Class::<TextEncoder>::define(&globals).expect("failed to define TextEncoder");
             Class::<TextDecoder>::define(&globals).expect("failed to define TextDecoder");
 
@@ -223,28 +251,14 @@ mod tests {
             let loaded_mod =
                 unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }.unwrap();
 
-            let _ = loaded_mod.eval();
-        });
+            loaded_mod
+                .eval()
+                .expect("failed to evaluate pintora bytecode");
 
-        loop {
-            // execute_pending_job returns Result<bool>
-            match rt.execute_pending_job() {
-                Ok(false) => break,
-                Ok(true) => continue,
-                Err(e) => {
-                    println!("Pending jobs threw an error: {:?}", e);
-                    break;
-                }
-            }
-        }
-
-        ctx.with(|ctx| {
-            let globals = ctx.globals();
-            println!("Eval succeeded!");
-            let _render_fn: rquickjs::Function = globals
+            let pr: Function = globals
                 .get("PintoraRender")
-                .expect("Failed to get PintoraRender in test");
-            println!("Successfully got PintoraRender function!");
+                .expect("PintoraRender not found");
+            assert!(pr.as_value().is_function());
         });
     }
 
