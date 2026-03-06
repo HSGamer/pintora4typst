@@ -2,3 +2,5 @@ target/
 *.wasm
 !typst-package/pintora.wasm
 tests/*.pdf
+.agents/
+skills-lock.json

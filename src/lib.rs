@@ -12,7 +12,7 @@ const PINTORA_BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pintor
 
 // ─── Native Polyfills via Functions ──────────────────────────────────────────
 
-#[derive(Trace, JsLifetime)]
+#[derive(Trace, JsLifetime, Default)]
 #[rquickjs::class]
 pub struct TextEncoder {}
 
@@ -20,7 +20,7 @@ pub struct TextEncoder {}
 impl TextEncoder {
     #[qjs(constructor)]
     pub fn new() -> Self {
-        Self {}
+        Self::default()
     }
 
     #[qjs(get)]
@@ -140,23 +140,24 @@ thread_local! {
             Class::<TextEncoder>::define(&globals).expect("failed to define TextEncoder");
             Class::<TextDecoder>::define(&globals).expect("failed to define TextDecoder");
 
-            let console = Object::new(ctx.clone()).unwrap();
-            console.set("log", Function::new(ctx.clone(), native_console_log).unwrap()).unwrap();
-            console.set("warn", Function::new(ctx.clone(), native_console_warn).unwrap()).unwrap();
-            console.set("error", Function::new(ctx.clone(), native_console_error).unwrap()).unwrap();
-            globals.set("console", console).unwrap();
+            let console = Object::new(ctx.clone()).expect("failed to create console object");
+            console.set("log", Function::new(ctx.clone(), native_console_log).expect("failed to bind console.log")).expect("failed to set console.log");
+            console.set("warn", Function::new(ctx.clone(), native_console_warn).expect("failed to bind console.warn")).expect("failed to set console.warn");
+            console.set("error", Function::new(ctx.clone(), native_console_error).expect("failed to bind console.error")).expect("failed to set console.error");
+            globals.set("console", console).expect("failed to set global console");
 
             // 1.5. Polyfill Uint8Array.fromBase64
             let uint8array: Object = globals.get("Uint8Array").expect("failed to get Uint8Array");
-            uint8array.set("fromBase64", Function::new(ctx.clone(), native_uint8array_from_base64).unwrap()).unwrap();
+            uint8array.set("fromBase64", Function::new(ctx.clone(), native_uint8array_from_base64).expect("failed to bind fromBase64")).expect("failed to set fromBase64");
 
-            // 2. Load and evaluate the pre-compiled bytecode module
             let loaded_mod = unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }
                 .expect("failed to load pintora bytecode");
 
-            loaded_mod.eval().expect("failed to evaluate pintora bytecode");
+            let eval_res = loaded_mod.eval().expect("failed to evaluate pintora bytecode");
+            let namespace = eval_res.0.namespace().expect("failed to get module namespace");
 
-            let _ = globals.get::<_, Function>("PintoraRender").expect("failed to get PintoraRender function");
+            let render_fn: Function = namespace.get("render").expect("Failed to find render export");
+            globals.set("render", render_fn).expect("failed to set global render");
         });
 
         (rt, ctx)
@@ -173,28 +174,81 @@ fn render(src: &[u8], style: &[u8], font: &[u8]) -> Result<Vec<u8>> {
     JS_ENV.with(|(_, ctx)| {
         ctx.with(|ctx| {
             let globals = ctx.globals();
+
             let render_fn: rquickjs::Function = globals
-                .get("PintoraRender")
-                .context("failed to get PintoraRender function")?;
+                .get("render")
+                .context("failed to get render function")?;
 
-            let result_res: rquickjs::Result<String> =
-                render_fn.call((src_str, style_str, font_str));
-            let result = match result_res {
-                Ok(r) => r,
-                Err(e) => {
-                    let mut msg = format!("failed to call PintoraRender: {:?}", e);
-                    if let Some(js_error) = ctx.catch().into_exception() {
-                        msg = format!(
-                            "JS Exception in PintoraRender: {} \nStack: {}",
-                            js_error.message().unwrap_or_default(),
-                            js_error.stack().unwrap_or_default()
-                        );
+            let opts =
+                rquickjs::Object::new(ctx.clone()).context("failed to create opts object")?;
+            opts.set("code", src_str).context("failed to set code")?;
+
+            if !style_str.is_empty() || !font_str.is_empty() {
+                let theme_variables = rquickjs::Object::new(ctx.clone())
+                    .context("failed to create theme Variables")?;
+                if !style_str.is_empty() {
+                    let json_parse: rquickjs::Function = globals
+                        .get::<_, rquickjs::Object>("JSON")
+                        .context("failed to get JSON object")?
+                        .get("parse")
+                        .context("failed to get JSON.parse")?;
+                    if let Ok(style_obj) = json_parse.call::<_, rquickjs::Object>((style_str,)) {
+                        let object_assign: rquickjs::Function = globals
+                            .get::<_, rquickjs::Object>("Object")
+                            .context("failed to get Object object")?
+                            .get("assign")
+                            .context("failed to get Object.assign")?;
+                        let _ = object_assign.call::<_, ()>((theme_variables.clone(), style_obj));
                     }
-                    return Err(anyhow::anyhow!(msg));
                 }
-            };
+                if !font_str.is_empty() {
+                    theme_variables
+                        .set("fontFamily", font_str)
+                        .context("failed to set fontFamily")?;
+                }
+                let theme_config =
+                    rquickjs::Object::new(ctx.clone()).context("failed to create themeConfig")?;
+                theme_config
+                    .set("themeVariables", theme_variables)
+                    .context("failed to set themeVariables")?;
+                let pintora_config =
+                    rquickjs::Object::new(ctx.clone()).context("failed to create pintoraConfig")?;
+                pintora_config
+                    .set("themeConfig", theme_config)
+                    .context("failed to set themeConfig")?;
 
-            Ok(result.into_bytes())
+                opts.set("pintoraConfig", pintora_config)
+                    .context("failed to set pintoraConfig to opts")?;
+            }
+
+            let promise: rquickjs::Promise = render_fn.call((opts,)).map_err(|e| {
+                let mut msg = format!("failed to call render_fn: {:?}", e);
+                if let Some(js_error) = ctx.catch().into_exception() {
+                    msg = format!(
+                        "JS Exception: {} \nStack: {}",
+                        js_error.message().unwrap_or_default(),
+                        js_error.stack().unwrap_or_default()
+                    );
+                }
+                anyhow::anyhow!(msg)
+            })?;
+
+            let res_obj: rquickjs::Object = promise.finish().map_err(|e| {
+                let mut msg = format!("failed to finish promise: {:?}", e);
+                if let Some(js_error) = ctx.catch().into_exception() {
+                    msg = format!(
+                        "JS Exception in Promise: {} \nStack: {}",
+                        js_error.message().unwrap_or_default(),
+                        js_error.stack().unwrap_or_default()
+                    );
+                }
+                anyhow::anyhow!(msg)
+            })?;
+
+            let data: String = res_obj
+                .get("data")
+                .map_err(|_| anyhow::anyhow!("render result missing 'data' field"))?;
+            Ok(data.into_bytes())
         })
     })
 }
@@ -205,40 +259,46 @@ mod tests {
 
     #[test]
     fn test_eval_module() {
-        let rt = rquickjs::Runtime::new().unwrap();
-        let ctx = rquickjs::Context::full(&rt).unwrap();
+        let rt = rquickjs::Runtime::new().expect("failed to init test runtime");
+        let ctx = rquickjs::Context::full(&rt).expect("failed to init test context");
 
         ctx.with(|ctx| {
             let globals = ctx.globals();
 
-            let console = Object::new(ctx.clone()).unwrap();
+            let console = Object::new(ctx.clone()).expect("failed to create console object");
             console
                 .set(
                     "log",
-                    Function::new(ctx.clone(), native_console_log).unwrap(),
+                    Function::new(ctx.clone(), native_console_log)
+                        .expect("failed to bind console.log"),
                 )
-                .unwrap();
+                .expect("failed to set console.log");
             console
                 .set(
                     "warn",
-                    Function::new(ctx.clone(), native_console_warn).unwrap(),
+                    Function::new(ctx.clone(), native_console_warn)
+                        .expect("failed to bind console.warn"),
                 )
-                .unwrap();
+                .expect("failed to set console.warn");
             console
                 .set(
                     "error",
-                    Function::new(ctx.clone(), native_console_error).unwrap(),
+                    Function::new(ctx.clone(), native_console_error)
+                        .expect("failed to bind console.error"),
                 )
-                .unwrap();
-            globals.set("console", console).unwrap();
+                .expect("failed to set console.error");
+            globals
+                .set("console", console)
+                .expect("failed to set global console");
 
             let uint8array: Object = globals.get("Uint8Array").expect("failed to get Uint8Array");
             uint8array
                 .set(
                     "fromBase64",
-                    Function::new(ctx.clone(), native_uint8array_from_base64).unwrap(),
+                    Function::new(ctx.clone(), native_uint8array_from_base64)
+                        .expect("failed to bind fromBase64"),
                 )
-                .unwrap();
+                .expect("failed to set fromBase64");
 
             Class::<TextEncoder>::define(&globals).expect("failed to define TextEncoder");
             Class::<TextDecoder>::define(&globals).expect("failed to define TextDecoder");
@@ -249,28 +309,40 @@ mod tests {
                 "throw.js",
                 "throw new Error('test error');",
             )
-            .unwrap();
+            .expect("failed to declare module");
             let _ = throw_mod.eval();
             let err = ctx.catch();
             if err.is_exception() {
                 println!(
                     "throw_mod correctly threw: {:?}",
-                    err.as_exception().unwrap().message()
+                    err.as_exception()
+                        .expect("failed to get exception")
+                        .message()
                 );
             } else {
                 println!("throw_mod did NOT throw!");
             }
 
-            let loaded_mod =
-                unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }.unwrap();
+            let loaded_mod = unsafe { rquickjs::Module::load(ctx.clone(), PINTORA_BYTECODE) }
+                .expect("failed to load bytecode");
 
-            loaded_mod
+            let eval_res = loaded_mod
                 .eval()
                 .expect("failed to evaluate pintora bytecode");
+            let namespace = eval_res
+                .0
+                .namespace()
+                .expect("failed to extract export namespace");
 
-            let pr: Function = globals
-                .get("PintoraRender")
-                .expect("PintoraRender not found");
+            let render_fn: Function = namespace
+                .get("render")
+                .expect("Failed to find render export");
+
+            globals
+                .set("render", render_fn)
+                .expect("failed to set global render");
+
+            let pr: Function = globals.get("render").expect("render not found");
             assert!(pr.as_value().is_function());
         });
     }
@@ -289,7 +361,8 @@ sequenceDiagram
         let font = "sans-serif";
 
         println!("Calling render with UTF-8...");
-        let result = render(src.as_bytes(), style.as_bytes(), font.as_bytes()).unwrap();
+        let result = render(src.as_bytes(), style.as_bytes(), font.as_bytes())
+            .expect("Expected UTF-8 render to complete");
         println!("Render result: {}", String::from_utf8_lossy(&result));
     }
 }
