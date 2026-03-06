@@ -9,17 +9,18 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1"
-quickjs-wasm-rs = "3.1.0"
+rquickjs = { version = "0.11", default-features = false, features = ["classes", "macro"] }
 wasm-minimal-protocol = "0.1"
+base64 = "0.22"
 
 [build-dependencies]
-cc = "1.0"
+anyhow = "1"
 regex = "1"
-quickjs-wasm-rs = "3.1.0"
+rquickjs = { version = "0.11", default-features = false }
 
 [profile.release]
-lto = true
+lto = "fat"
 strip = true
-opt-level = 'z'
+opt-level = 3
 codegen-units = 1
 panic = 'abort'
