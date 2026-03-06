@@ -32,3 +32,40 @@ test: build
 clean:
 	cargo clean
 	rm -f typst-package/pintora.wasm tests/*.pdf
+
+name          := `grep '^name' typst-package/typst.toml | cut -d'"' -f2`
+version       := `grep '^version' typst-package/typst.toml | cut -d'"' -f2`
+dist_dir      := "typst-package"
+packages_fork := "git@github.com:HSGamer/typst-packages.git"
+packages_dir  := "typst-packages"
+
+# Publish to typst/packages: sparse-clone fork, copy dist, commit and push
+publish: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BRANCH="packages/{{ name }}/{{ version }}"
+    PKG_PATH="packages/preview/{{ name }}/{{ version }}"
+
+    echo "Cloning {{ packages_fork }} (sparse)..."
+    rm -rf "{{ packages_dir }}"
+    git clone --depth 1 --sparse --filter=blob:none "{{ packages_fork }}" "{{ packages_dir }}"
+
+    cd "{{ packages_dir }}"
+    # Delete remote branch if it exists from a previous attempt
+    git push origin --delete "$BRANCH" 2>/dev/null || true
+    git checkout -b "$BRANCH"
+    git sparse-checkout set "$PKG_PATH"
+
+    echo "Copying {{ dist_dir }} → $PKG_PATH..."
+    mkdir -p "$PKG_PATH"
+    cp -r "../{{ dist_dir }}/." "$PKG_PATH/"
+    cp "../README.md" "$PKG_PATH/README.md"
+
+    git add "$PKG_PATH"
+    git commit -m "{{ name }}:{{ version }}"
+    git push -u origin "$BRANCH"
+
+    cd ..
+    rm -rf "{{ packages_dir }}"
+    echo "Done! Branch '$BRANCH' pushed to {{ packages_fork }}"
+    echo "Open a PR at https://github.com/typst/packages to publish."
