@@ -3,3 +3,4 @@ target/
 tests/*.pdf
 .agents/
 skills-lock.json
+js/runtime.esm.js
