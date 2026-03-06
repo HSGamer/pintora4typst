@@ -60,6 +60,7 @@ publish: build
     mkdir -p "$PKG_PATH"
     cp -r "../{{ dist_dir }}/." "$PKG_PATH/"
     cp "../README.md" "$PKG_PATH/README.md"
+    cp "../LICENSE" "$PKG_PATH/LICENSE"
 
     git add "$PKG_PATH"
     git commit -m "{{ name }}:{{ version }}"
