@@ -7,7 +7,7 @@ export PATH := env_var("HOME") + "/.cargo/bin:" + env_var("PATH")
 build: setup
 	cargo build --release --target wasm32-wasip1
 	wasi-stub -r 0 ./target/wasm32-wasip1/release/rust_pintora.wasm -o typst-package/pintora.wasm
-	wasm-opt typst-package/pintora.wasm -O3 --converge --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o typst-package/pintora.wasm
+	wasm-opt typst-package/pintora.wasm -O3 --converge --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --strip-debug --strip-producers --strip-target-features -o typst-package/pintora.wasm
 
 # Build the WASM plugin without the slow wasm-opt pass (useful for rapid development)
 dev: setup
